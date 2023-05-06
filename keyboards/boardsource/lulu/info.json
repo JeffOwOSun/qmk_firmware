@@ -7,10 +7,7 @@
     "bootmagic": true,
     "extrakey": true,
     "mousekey": true,
-    "nkro": true,
-    "rgb_matrix": true,
-    "oled": true,
-    "encoder": true
+    "nkro": true
   },
   "url": "https://boardsource.xyz/projects/60de24d6847112054777bbdd",
   "usb": {
