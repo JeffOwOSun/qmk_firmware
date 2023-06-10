@@ -28,8 +28,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // #define MASTER_RIGHT
 // #define EE_HANDS
 
-#define QUICK_TAP_TERM 0
-#define TAPPING_TERM 100
+#define TAPPING_TERM 200
+#define PERMISSIVE_HOLD
 
 // Underglow
 /*
@@ -37,3 +37,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define RGBLED_NUM 14    // Number of LEDs
 #define RGBLIGHT_SLEEP
 */
+
+#define ENCODERS_PAD_A { F4 }
+#define ENCODERS_PAD_B { F5 }
