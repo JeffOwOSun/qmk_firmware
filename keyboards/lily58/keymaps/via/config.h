@@ -29,7 +29,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // #define EE_HANDS
 
 #define TAPPING_TERM 200
-#define PERMISSIVE_HOLD
 
 // Underglow
 /*
@@ -40,3 +39,5 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define ENCODERS_PAD_A { F4 }
 #define ENCODERS_PAD_B { F5 }
+
+#define BOTH_SHIFTS_TURNS_ON_CAPS_WORD
