@@ -59,11 +59,8 @@ const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
 };
 #endif
 
-// Force native multitouch digitizer mode (macOS doesn't send PTP feature report)
-extern bool digitizer_send_mouse_reports;
-void keyboard_post_init_user(void) {
-    digitizer_send_mouse_reports = false;
-}
+// Touchpad: mouse fallback mode (macOS doesn't support Windows PTP protocol)
+// TODO: investigate native macOS multitouch digitizer support
 
 // 4-key reset combo: Q + Z + P + / held for 1 second -> QK_BOOT
 // Q=[1,1], Z=[3,1], P=[6,4], /=[8,4]
