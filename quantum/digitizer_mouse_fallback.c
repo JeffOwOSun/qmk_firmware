@@ -6,6 +6,7 @@
 // We can fallback to reporting as a mouse for hosts which do not implement trackpad support.
 
 #    include <stdlib.h>
+#    include QMK_KEYBOARD_H
 #    include "digitizer.h"
 #    include "digitizer_mouse_fallback.h"
 #    include "debug.h"
@@ -252,19 +253,19 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
             } else if (digitizer_send_mouse_reports) {
                 if (distance_x > DIGITIZER_MOUSE_SWIPE_DISTANCE && abs(distance_y) < DIGITIZER_MOUSE_SWIPE_THRESHOLD) {
                     // Swipe right
-                    tap_code(DIGITIZER_SWIPE_RIGHT_KC);
+                    tap_code16(DIGITIZER_SWIPE_RIGHT_KC);
                     state = Finished;
                 } else if (distance_x < -DIGITIZER_MOUSE_SWIPE_DISTANCE && abs(distance_y) < DIGITIZER_MOUSE_SWIPE_THRESHOLD) {
                     // Swipe left
-                    tap_code(DIGITIZER_SWIPE_LEFT_KC);
+                    tap_code16(DIGITIZER_SWIPE_LEFT_KC);
                     state = Finished;
                 } else if (distance_y > DIGITIZER_MOUSE_SWIPE_DISTANCE && abs(distance_x) < DIGITIZER_MOUSE_SWIPE_THRESHOLD) {
                     // Swipe down
-                    tap_code(DIGITIZER_SWIPE_DOWN_KC);
+                    tap_code16(DIGITIZER_SWIPE_DOWN_KC);
                     state = Finished;
                 } else if (distance_y < -DIGITIZER_MOUSE_SWIPE_DISTANCE && abs(distance_x) < DIGITIZER_MOUSE_SWIPE_THRESHOLD) {
                     // Swipe up
-                    tap_code(DIGITIZER_SWIPE_UP_KC);
+                    tap_code16(DIGITIZER_SWIPE_UP_KC);
                     state = Finished;
                 }
             }
