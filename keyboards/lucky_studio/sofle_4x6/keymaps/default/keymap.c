@@ -59,6 +59,12 @@ const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
 };
 #endif
 
+// Force native multitouch digitizer mode (macOS doesn't send PTP feature report)
+extern bool digitizer_send_mouse_reports;
+void keyboard_post_init_user(void) {
+    digitizer_send_mouse_reports = false;
+}
+
 // 4-corner reset combo: [0,0] + [5,5] + [4,0] + [9,5] held for 1 second -> QK_BOOT
 static uint32_t reset_timer = 0;
 
