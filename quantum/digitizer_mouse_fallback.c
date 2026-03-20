@@ -221,8 +221,13 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
                 carry_h = h % DIGITIZER_SCROLL_DIVISOR;
                 carry_v = v % DIGITIZER_SCROLL_DIVISOR;
 
+#ifdef DIGITIZER_SCROLL_INVERT
+                mouse_report.h = -(h / DIGITIZER_SCROLL_DIVISOR);
+                mouse_report.v = -(v / DIGITIZER_SCROLL_DIVISOR);
+#else
                 mouse_report.h = h / DIGITIZER_SCROLL_DIVISOR;
                 mouse_report.v = v / DIGITIZER_SCROLL_DIVISOR;
+#endif
             }
             break;
         }
