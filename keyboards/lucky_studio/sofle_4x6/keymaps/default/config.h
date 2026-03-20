@@ -1,9 +1,6 @@
 #pragma once
 #define TAPPING_TERM 200
 
-// Touchpad sensitivity (default 400, range 50-1200)
-#define POINTING_DEVICE_DEFAULT_CPI 100
-
 // Scroll speed (higher = slower, default 10)
 #define DIGITIZER_SCROLL_DIVISOR 30
 

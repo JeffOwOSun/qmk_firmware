@@ -7,8 +7,18 @@ enum layer_names {
     _NAVNUM
 };
 
+enum custom_keycodes {
+    SPEED_UP = SAFE_RANGE,
+    SPEED_DN
+};
+
 // Mission Control on encoder click
 #define MC_CTL LCTL(KC_UP)
+
+// Touchpad speed levels
+static const uint8_t speed_levels[] = {2, 4, 6, 8, 12};
+#define SPEED_LEVEL_COUNT (sizeof(speed_levels) / sizeof(speed_levels[0]))
+static uint8_t speed_index = 1; // default index 1 = divisor 4
 
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
@@ -21,8 +31,8 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         MT(MOD_LCTL, KC_ESC), KC_A, KC_S, KC_D, KC_F, KC_G,              KC_H,    KC_J,    KC_K,    KC_L,    KC_SCLN, KC_QUOT,
     //  Row 3
         SC_LSPO, KC_Z,    KC_X,    KC_C,    KC_V,    KC_B,               KC_N,    KC_M,    KC_COMM, KC_DOT,  KC_SLSH, SC_RSPC,
-    //  Row 4: [4,0]=enc click, [4,1]-[4,5]=thumb, [9,0]-[9,4]=thumb, [9,5]=enc click
-        MC_CTL,  KC_MINS, KC_EQL,  KC_LALT, LT(_NAVNUM, KC_SPC), KC_LGUI, CW_TOGG, KC_ENT, LT(_FKEYS, KC_DEL), KC_LBRC, KC_RBRC, MC_CTL
+    //  Row 4: [4,0]=enc click, [4,1]-[4,5]=thumb, [9,0]-[9,4]=thumb, [9,5]=no encoder
+        MC_CTL,  KC_MINS, KC_EQL,  KC_LALT, LT(_NAVNUM, KC_SPC), KC_LGUI, CW_TOGG, KC_ENT, LT(_FKEYS, KC_DEL), KC_LBRC, KC_RBRC, KC_NO
     ),
 
     [_COLEMAK] = LAYOUT(
@@ -52,15 +62,33 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
 #if defined(ENCODER_MAP_ENABLE)
 const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
-    [_BASE]    = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)), ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) },
-    [_COLEMAK] = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)), ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) },
-    [_FKEYS]   = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)), ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) },
-    [_NAVNUM]  = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)), ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) }
+    [_BASE]    = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) },
+    [_COLEMAK] = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) },
+    [_FKEYS]   = { ENCODER_CCW_CW(LCTL(KC_RGHT), LCTL(KC_LEFT)) },
+    [_NAVNUM]  = { ENCODER_CCW_CW(SPEED_DN, SPEED_UP) }
 };
 #endif
 
+// Touchpad speed cycling
+extern uint8_t digitizer_mouse_speed_divisor;
+
+bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (record->event.pressed) {
+        switch (keycode) {
+            case SPEED_UP:
+                if (speed_index > 0) speed_index--;
+                digitizer_mouse_speed_divisor = speed_levels[speed_index];
+                return false;
+            case SPEED_DN:
+                if (speed_index < SPEED_LEVEL_COUNT - 1) speed_index++;
+                digitizer_mouse_speed_divisor = speed_levels[speed_index];
+                return false;
+        }
+    }
+    return true;
+}
+
 // Touchpad: mouse fallback mode (macOS doesn't support Windows PTP protocol)
-// TODO: investigate native macOS multitouch digitizer support
 
 // 4-key reset combo: Q + Z + P + / held for 1 second -> QK_BOOT
 // Q=[1,1], Z=[3,1], P=[6,4], /=[8,4]

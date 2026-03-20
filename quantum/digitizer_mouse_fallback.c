@@ -8,6 +8,10 @@
 #    include <stdlib.h>
 #    include QMK_KEYBOARD_H
 #    include "digitizer.h"
+
+#    ifndef DIGITIZER_MOUSE_SPEED_DIVISOR
+#        define DIGITIZER_MOUSE_SPEED_DIVISOR 4
+#    endif
 #    include "digitizer_mouse_fallback.h"
 #    include "debug.h"
 #    include "timer.h"
@@ -78,6 +82,7 @@ bool digitizer_taps_as_clicks = false;
 // Microsofts Precision Trackpad protocol. This variable can also be modified by users
 // to force reporting as a mouse or as a digitizer.
 bool                  digitizer_send_mouse_reports = true;
+uint8_t               digitizer_mouse_speed_divisor = DIGITIZER_MOUSE_SPEED_DIVISOR;
 static report_mouse_t mouse_report                 = {};
 
 static report_mouse_t digitizer_get_mouse_report(report_mouse_t _mouse_report);
@@ -208,8 +213,8 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
             if (contacts == 0) {
                 state = None;
             } else if (contacts == 1) {
-                mouse_report.x = x - last_x;
-                mouse_report.y = y - last_y;
+                mouse_report.x = (x - last_x) / digitizer_mouse_speed_divisor;
+                mouse_report.y = (y - last_y) / digitizer_mouse_speed_divisor;
             } else if (contacts == 3 && duration < DIGITIZER_MOUSE_SWIPE_TIMEOUT) {
                 state = Swipe;
             } else {
