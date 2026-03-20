@@ -65,11 +65,12 @@ void keyboard_post_init_user(void) {
     digitizer_send_mouse_reports = false;
 }
 
-// 4-corner reset combo: [0,0] + [5,5] + [4,0] + [9,5] held for 1 second -> QK_BOOT
+// 4-key reset combo: Q + Z + P + / held for 1 second -> QK_BOOT
+// Q=[1,1], Z=[3,1], P=[6,4], /=[8,4]
 static uint32_t reset_timer = 0;
 
 void matrix_scan_user(void) {
-    if (matrix_is_on(0, 0) && matrix_is_on(5, 5) && matrix_is_on(4, 0) && matrix_is_on(9, 5)) {
+    if (matrix_is_on(1, 1) && matrix_is_on(3, 1) && matrix_is_on(6, 4) && matrix_is_on(8, 4)) {
         if (reset_timer == 0) {
             reset_timer = timer_read32();
         } else if (timer_elapsed32(reset_timer) > 1000) {
