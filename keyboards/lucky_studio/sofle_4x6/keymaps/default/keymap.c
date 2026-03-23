@@ -69,6 +69,11 @@ const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
 };
 #endif
 
+// Touchpad gestures:
+// 1-finger tap = left click, 1-finger tap+hold = left drag
+// 2-finger tap = right click, 2-finger tap+hold = right drag
+// 3-finger tap = middle click, 3-finger tap+hold = middle drag
+
 // Touchpad speed cycling
 extern uint8_t digitizer_mouse_speed_divisor;
 

@@ -13,5 +13,8 @@
 // Natural scrolling (swipe down = scroll up)
 #define DIGITIZER_SCROLL_INVERT
 
-// Enable tap-to-click
-#define DIGITIZER_REPORT_TAPS_AS_CLICKS
+// Tap-to-click tuning
+#define DIGITIZER_MOUSE_TAP_DISTANCE 150           // ~1.5mm movement tolerance (default 25 = 0.25mm)
+#define DIGITIZER_MOUSE_TAP_DETECTION_TIMEOUT 120   // 120ms to register tap (default 200ms)
+#define DIGITIZER_MOUSE_TAP_DURATION 50             // 50ms button hold per tap (default 1ms)
+// DIGITIZER_REPORT_TAPS_AS_CLICKS disabled — clicks handled via mouse fallback only

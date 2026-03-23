@@ -113,9 +113,8 @@ static bool digitizer_mouse_fallback_init(void)
 static report_mouse_t digitizer_get_mouse_report(report_mouse_t _mouse_report) {
     if (digitizer_send_mouse_reports) {
         report_mouse_t report = mouse_report;
-        // Retain the button state, but drop any motion.
+        // Clear everything — buttons are set fresh each cycle by digitizer_update_mouse_report
         memset(&mouse_report, 0, sizeof(report_mouse_t));
-        mouse_report.buttons = report.buttons;
         return report;
     }
     return _mouse_report;
@@ -201,10 +200,14 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
             if (contacts == 0) {
                 state              = Tapped;
                 contact_start_time = timer_read32();
-            } else if (contacts >= 3) {
+            } else if (contacts >= 3 && (distance_x > DIGITIZER_MOUSE_SWIPE_THRESHOLD || distance_y > DIGITIZER_MOUSE_SWIPE_THRESHOLD)) {
                 state = Swipe;
             } else if (duration > DIGITIZER_MOUSE_TAP_DETECTION_TIMEOUT || distance_x > DIGITIZER_MOUSE_TAP_DISTANCE || distance_y > DIGITIZER_MOUSE_TAP_DISTANCE) {
-                state = MoveScroll;
+                if (contacts >= 3) {
+                    state = Swipe;
+                } else {
+                    state = MoveScroll;
+                }
             }
             break;
         }
@@ -212,7 +215,10 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
         case MoveScroll: {
             if (contacts == 0) {
                 state = None;
-            } else if (contacts == 1) {
+            } else if (contacts == 1 || (state == Drag && contacts <= 3)) {
+                // 1 finger = cursor move
+                // 2 fingers in Drag state = right-click drag
+                // 3 fingers in Drag state = middle-click drag
                 mouse_report.x = (x - last_x) / digitizer_mouse_speed_divisor;
                 mouse_report.y = (y - last_y) / digitizer_mouse_speed_divisor;
             } else if (contacts == 3 && duration < DIGITIZER_MOUSE_SWIPE_TIMEOUT) {
@@ -288,29 +294,29 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
             break;
         }
     }
-    static bool     tap      = false;
-    static uint32_t tap_time = 0;
-    if (tap_count) {
-        if (timer_elapsed32(tap_time) > DIGITIZER_MOUSE_TAP_DURATION) {
-            tap = !tap;
-            if (!tap) {
-                tap_count--;
-            }
-            tap_time = timer_read32();
-        }
+    // Simple tap handling: tap sets a flag that holds the button for one report cycle
+    // then clears. Drag holds button while fingers are down.
+    static bool     tap_fire   = false;
+    static uint32_t tap_fire_time = 0;
+
+    if (tap_count > 0 && !tap_fire) {
+        tap_fire = true;
+        tap_fire_time = timer_read32();
+        tap_count = 0;
     }
-    const bool button_pressed = tap || (state == Drag);
+    if (tap_fire && timer_elapsed32(tap_fire_time) > DIGITIZER_MOUSE_TAP_DURATION) {
+        tap_fire = false;
+    }
+
+    const bool button_pressed = tap_fire || (state == Drag);
     if (report->button1 || (tap_contacts == 1 && button_pressed)) {
         mouse_report.buttons |= 0x1;
-        if (digitizer_taps_as_clicks) report->button1 = 1;
     }
     if (report->button2 || (tap_contacts == 2 && button_pressed)) {
         mouse_report.buttons |= 0x2;
-        if (digitizer_taps_as_clicks) report->button2 = 1;
     }
     if (report->button3 || (tap_contacts == 3 && button_pressed)) {
         mouse_report.buttons |= 0x4;
-        if (digitizer_taps_as_clicks) report->button3 = 1;
     }
     last_contacts = contacts;
     last_x        = x;
