@@ -10,7 +10,7 @@
 #    include "digitizer.h"
 
 #    ifndef DIGITIZER_MOUSE_SPEED_DIVISOR
-#        define DIGITIZER_MOUSE_SPEED_DIVISOR 4
+#        define DIGITIZER_MOUSE_SPEED_DIVISOR 10
 #    endif
 #    include "digitizer_mouse_fallback.h"
 #    include "debug.h"
@@ -162,6 +162,82 @@ static void digitizer_set_cpi(uint16_t cpi) {
     digitizer_set_scale((mouse_cpi * 100) / DIGITIZER_MAX_CPI);
 }
 
+// =============================================================================
+// 1-Euro Filter for cursor smoothing
+// Adaptive: heavy smoothing at rest (no jitter), light at speed (no lag)
+// =============================================================================
+#ifndef DIGITIZER_FILTER_MINCUTOFF
+#    define DIGITIZER_FILTER_MINCUTOFF 0.5f  // Hz — lower = less jitter at rest
+#endif
+#ifndef DIGITIZER_FILTER_BETA
+#    define DIGITIZER_FILTER_BETA 0.005f     // speed coefficient — higher = less lag at speed
+#endif
+#ifndef DIGITIZER_FILTER_DCUTOFF
+#    define DIGITIZER_FILTER_DCUTOFF 1.0f    // Hz — derivative smoothing cutoff
+#endif
+
+typedef struct {
+    float x_hat;      // filtered position
+    float dx_hat;     // filtered derivative
+    bool  initialized;
+} one_euro_state_t;
+
+static one_euro_state_t filter_x = {0, 0, false};
+static one_euro_state_t filter_y = {0, 0, false};
+
+static float one_euro_alpha(float fc, float te) {
+    float r = 2.0f * 3.14159f * fc * te;
+    return r / (r + 1.0f);
+}
+
+static float one_euro_filter(one_euro_state_t *s, float xi, float te) {
+    if (!s->initialized) {
+        s->x_hat = xi;
+        s->dx_hat = 0;
+        s->initialized = true;
+        return xi;
+    }
+    // Estimate derivative
+    float dx = (xi - s->x_hat) / te;
+    // Smooth derivative
+    float alpha_d = one_euro_alpha(DIGITIZER_FILTER_DCUTOFF, te);
+    s->dx_hat = alpha_d * dx + (1.0f - alpha_d) * s->dx_hat;
+    // Adapt cutoff based on speed
+    float fc = DIGITIZER_FILTER_MINCUTOFF + DIGITIZER_FILTER_BETA * (s->dx_hat > 0 ? s->dx_hat : -s->dx_hat);
+    // Smooth signal
+    float alpha = one_euro_alpha(fc, te);
+    s->x_hat = alpha * xi + (1.0f - alpha) * s->x_hat;
+    return s->x_hat;
+}
+
+// Cursor acceleration: slow = precise, fast = amplified
+// Below threshold: output = delta / divisor (linear, precise)
+// Above threshold: output grows quadratically with speed
+#ifndef DIGITIZER_ACCEL_THRESHOLD
+#    define DIGITIZER_ACCEL_THRESHOLD 8   // filtered units per tick — below this is "slow"
+#endif
+#ifndef DIGITIZER_ACCEL_FACTOR
+#    define DIGITIZER_ACCEL_FACTOR 4      // max acceleration multiplier at high speed
+#endif
+
+static inline int accelerate(int delta, int divisor) {
+    int abs_d = abs(delta);
+    if (abs_d <= DIGITIZER_ACCEL_THRESHOLD) {
+        // Slow movement: linear, precise
+        return delta / divisor;
+    }
+    // Fast movement: quadratic acceleration
+    // scale = 1 + (ACCEL_FACTOR - 1) * (speed - threshold) / threshold
+    // Capped at ACCEL_FACTOR
+    int excess = abs_d - DIGITIZER_ACCEL_THRESHOLD;
+    int scale_x256 = 256 + (DIGITIZER_ACCEL_FACTOR - 1) * 256 * excess / DIGITIZER_ACCEL_THRESHOLD;
+    if (scale_x256 > DIGITIZER_ACCEL_FACTOR * 256) scale_x256 = DIGITIZER_ACCEL_FACTOR * 256;
+    int result = (delta * scale_x256) / (divisor * 256);
+    // Ensure at least ±1 if delta was nonzero
+    if (result == 0 && delta != 0) result = (delta > 0) ? 1 : -1;
+    return result;
+}
+
 // The gesture detection state machine will transition between these states.
 typedef enum { None, Down, MoveScroll, Tapped, DoubleTapped, Drag, Swipe, Finished } State;
 
@@ -192,6 +268,9 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
     static uint16_t last_y             = 0;
     static int32_t  scroll_vel_h       = 0;
     static int32_t  scroll_vel_v       = 0;
+    static bool     cursor_tracking    = false;
+    static float    cursor_last_fx     = 0, cursor_last_fy = 0;
+    static float    cursor_accum_x     = 0, cursor_accum_y = 0;
     const uint16_t  x                  = report->fingers[0].x;
     const uint16_t  y                  = report->fingers[0].y;
     const uint32_t  duration           = timer_elapsed32(contact_start_time);
@@ -248,6 +327,8 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
         case MoveScroll: {
             if (contacts == 0) {
                 state = None;
+                cursor_tracking = false;
+                cursor_last_fx = 0; cursor_last_fy = 0;
                 // Start momentum from tracked scroll velocity (Q8.8 fixed-point)
                 if (abs(scroll_vel_h) > DIGITIZER_MOMENTUM_MIN_VEL || abs(scroll_vel_v) > DIGITIZER_MOMENTUM_MIN_VEL) {
                     momentum_vel_h = scroll_vel_h;
@@ -259,8 +340,39 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
                 scroll_vel_h = 0;
                 scroll_vel_v = 0;
             } else if (contacts == 1 || (state == Drag && contacts <= 3)) {
-                mouse_report.x = (x - last_x) / digitizer_mouse_speed_divisor;
-                mouse_report.y = (y - last_y) / digitizer_mouse_speed_divisor;
+                // Apply 1-Euro filter for jitter reduction
+                float te = 1.0f / 300.0f;
+                if (!cursor_tracking) {
+                    filter_x.initialized = false;
+                    filter_y.initialized = false;
+                    cursor_tracking = true;
+                    cursor_accum_x = 0; cursor_accum_y = 0;
+                }
+                float fx = one_euro_filter(&filter_x, (float)x, te);
+                float fy = one_euro_filter(&filter_y, (float)y, te);
+                if (cursor_last_fx == 0 && cursor_last_fy == 0) {
+                    cursor_last_fx = fx; cursor_last_fy = fy;
+                }
+                float fdx = fx - cursor_last_fx;
+                float fdy = fy - cursor_last_fy;
+                cursor_last_fx = fx;
+                cursor_last_fy = fy;
+                // Apply acceleration in float domain before truncating
+                float speed = fdx * fdx + fdy * fdy;  // squared speed
+                float threshold_sq = (float)(DIGITIZER_ACCEL_THRESHOLD * DIGITIZER_ACCEL_THRESHOLD);
+                float scale = 1.0f;
+                if (speed > threshold_sq) {
+                    float spd = __builtin_sqrtf(speed);
+                    float excess = spd - DIGITIZER_ACCEL_THRESHOLD;
+                    scale = 1.0f + (DIGITIZER_ACCEL_FACTOR - 1.0f) * excess / DIGITIZER_ACCEL_THRESHOLD;
+                    if (scale > DIGITIZER_ACCEL_FACTOR) scale = DIGITIZER_ACCEL_FACTOR;
+                }
+                cursor_accum_x += fdx * scale / digitizer_mouse_speed_divisor;
+                cursor_accum_y += fdy * scale / digitizer_mouse_speed_divisor;
+                mouse_report.x = (int)cursor_accum_x;
+                mouse_report.y = (int)cursor_accum_y;
+                cursor_accum_x -= mouse_report.x;
+                cursor_accum_y -= mouse_report.y;
                 // Don't reset scroll velocity here — preserve it for momentum
                 // when the last finger lifts. Only reset for Drag (not scroll).
                 if (state == Drag) {
