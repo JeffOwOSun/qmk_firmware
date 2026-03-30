@@ -210,32 +210,38 @@ static float one_euro_filter(one_euro_state_t *s, float xi, float te) {
     return s->x_hat;
 }
 
-// Cursor acceleration: slow = precise, fast = amplified
-// Below threshold: output = delta / divisor (linear, precise)
-// Above threshold: output grows quadratically with speed
-#ifndef DIGITIZER_ACCEL_THRESHOLD
-#    define DIGITIZER_ACCEL_THRESHOLD 8   // filtered units per tick — below this is "slow"
+// Cursor acceleration: S-curve (sigmoid) like macOS
+// - Very slow: sub-1:1 (precise pixel targeting)
+// - Medium: steep ramp (acceleration kicks in)
+// - Fast: plateaus at max gain
+#ifndef DIGITIZER_ACCEL_MAX
+#    define DIGITIZER_ACCEL_MAX 5.0f      // max gain at high speed
 #endif
-#ifndef DIGITIZER_ACCEL_FACTOR
-#    define DIGITIZER_ACCEL_FACTOR 4      // max acceleration multiplier at high speed
+#ifndef DIGITIZER_ACCEL_MIDPOINT
+#    define DIGITIZER_ACCEL_MIDPOINT 15.0f // speed where gain = 50% of max (sigmoid center)
+#endif
+#ifndef DIGITIZER_ACCEL_STEEPNESS
+#    define DIGITIZER_ACCEL_STEEPNESS 0.25f // how sharp the S-curve transition is
 #endif
 
-static inline int accelerate(int delta, int divisor) {
-    int abs_d = abs(delta);
-    if (abs_d <= DIGITIZER_ACCEL_THRESHOLD) {
-        // Slow movement: linear, precise
-        return delta / divisor;
+static inline float accel_curve(float speed) {
+    // Sigmoid: gain = max / (1 + exp(-steepness * (speed - midpoint)))
+    // At speed=0: gain ≈ 0 (but we add a base of 1.0)
+    // At speed=midpoint: gain = max/2
+    // At speed>>midpoint: gain ≈ max
+    float x = DIGITIZER_ACCEL_STEEPNESS * (speed - DIGITIZER_ACCEL_MIDPOINT);
+    // Fast exp approximation: 1/(1+exp(-x)) ≈ using tanh
+    float ex;
+    if (x > 6.0f) ex = 0.0f;       // exp(-6) ≈ 0
+    else if (x < -6.0f) ex = 1e6f;  // exp(6) is large
+    else {
+        // exp(-x) approximation via (1-x/n)^n with n=4
+        float t = 1.0f - x * 0.25f;
+        ex = t * t * t * t;
     }
-    // Fast movement: quadratic acceleration
-    // scale = 1 + (ACCEL_FACTOR - 1) * (speed - threshold) / threshold
-    // Capped at ACCEL_FACTOR
-    int excess = abs_d - DIGITIZER_ACCEL_THRESHOLD;
-    int scale_x256 = 256 + (DIGITIZER_ACCEL_FACTOR - 1) * 256 * excess / DIGITIZER_ACCEL_THRESHOLD;
-    if (scale_x256 > DIGITIZER_ACCEL_FACTOR * 256) scale_x256 = DIGITIZER_ACCEL_FACTOR * 256;
-    int result = (delta * scale_x256) / (divisor * 256);
-    // Ensure at least ±1 if delta was nonzero
-    if (result == 0 && delta != 0) result = (delta > 0) ? 1 : -1;
-    return result;
+    float sigmoid = 1.0f / (1.0f + ex);
+    // Scale: base gain of 1.0 + sigmoid * (max - 1.0)
+    return 1.0f + sigmoid * (DIGITIZER_ACCEL_MAX - 1.0f);
 }
 
 // The gesture detection state machine will transition between these states.
@@ -357,18 +363,11 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
                 float fdy = fy - cursor_last_fy;
                 cursor_last_fx = fx;
                 cursor_last_fy = fy;
-                // Apply acceleration in float domain before truncating
-                float speed = fdx * fdx + fdy * fdy;  // squared speed
-                float threshold_sq = (float)(DIGITIZER_ACCEL_THRESHOLD * DIGITIZER_ACCEL_THRESHOLD);
-                float scale = 1.0f;
-                if (speed > threshold_sq) {
-                    float spd = __builtin_sqrtf(speed);
-                    float excess = spd - DIGITIZER_ACCEL_THRESHOLD;
-                    scale = 1.0f + (DIGITIZER_ACCEL_FACTOR - 1.0f) * excess / DIGITIZER_ACCEL_THRESHOLD;
-                    if (scale > DIGITIZER_ACCEL_FACTOR) scale = DIGITIZER_ACCEL_FACTOR;
-                }
-                cursor_accum_x += fdx * scale / digitizer_mouse_speed_divisor;
-                cursor_accum_y += fdy * scale / digitizer_mouse_speed_divisor;
+                // S-curve acceleration based on combined speed
+                float speed = __builtin_sqrtf(fdx * fdx + fdy * fdy);
+                float gain = accel_curve(speed);
+                cursor_accum_x += fdx * gain / digitizer_mouse_speed_divisor;
+                cursor_accum_y += fdy * gain / digitizer_mouse_speed_divisor;
                 mouse_report.x = (int)cursor_accum_x;
                 mouse_report.y = (int)cursor_accum_y;
                 cursor_accum_x -= mouse_report.x;
