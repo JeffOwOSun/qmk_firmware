@@ -85,6 +85,27 @@ bool                  digitizer_send_mouse_reports = true;
 uint8_t               digitizer_mouse_speed_divisor = DIGITIZER_MOUSE_SPEED_DIVISOR;
 static report_mouse_t mouse_report                 = {};
 
+// Momentum scrolling (Apple-style exponential decay with fractional accumulator)
+int32_t  momentum_vel_h = 0;       // velocity in raw touchpad units/tick (Q8.8 fixed-point)
+int32_t  momentum_vel_v = 0;
+int32_t  momentum_accum_h = 0;     // fractional scroll accumulator
+int32_t  momentum_accum_v = 0;
+bool     momentum_active = false;
+// Debug exports
+int32_t  dbg_scroll_vel_h = 0, dbg_scroll_vel_v = 0;
+int      dbg_state = 0, dbg_contacts = 0, dbg_tap_contacts = 0;
+
+// Decay: 254/256 per tick at 300Hz ≈ Apple's 0.998/ms
+// At 300Hz: 0.993^300 = 0.12 after 1 sec (velocity drops to 12%)
+#ifndef DIGITIZER_MOMENTUM_DECAY_NUM
+#    define DIGITIZER_MOMENTUM_DECAY_NUM 254
+#endif
+#define DIGITIZER_MOMENTUM_DECAY_SHIFT 8  // divide by 256
+// Minimum velocity (Q8.8) before stopping
+#ifndef DIGITIZER_MOMENTUM_MIN_VEL
+#    define DIGITIZER_MOMENTUM_MIN_VEL 8   // very low threshold — momentum triggers easily
+#endif
+
 static report_mouse_t digitizer_get_mouse_report(report_mouse_t _mouse_report);
 static uint16_t       digitizer_get_cpi(void);
 static void           digitizer_set_cpi(uint16_t cpi);
@@ -153,7 +174,7 @@ static int   tap_count = 0;
  * @return true if update_mouse_report should run.
  */
 bool digitizer_update_gesture_state(void) {
-    return tap_count || state != None;
+    return tap_count || state != None || momentum_active;
 }
 
 /**
@@ -169,6 +190,8 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
     static int      last_contacts      = 0;
     static uint16_t last_x             = 0;
     static uint16_t last_y             = 0;
+    static int32_t  scroll_vel_h       = 0;
+    static int32_t  scroll_vel_v       = 0;
     const uint16_t  x                  = report->fingers[0].x;
     const uint16_t  y                  = report->fingers[0].y;
     const uint32_t  duration           = timer_elapsed32(contact_start_time);
@@ -181,6 +204,16 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
             contacts++;
         }
     }
+
+    // Kill momentum immediately when fingers touch
+    if (contacts > 0 && momentum_active) {
+        momentum_active = false;
+        momentum_vel_h = 0;
+        momentum_vel_v = 0;
+        momentum_accum_h = 0;
+        momentum_accum_v = 0;
+    }
+
     switch (state) {
         case None: {
             if (contacts != 0) {
@@ -215,33 +248,54 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
         case MoveScroll: {
             if (contacts == 0) {
                 state = None;
+                // Start momentum from tracked scroll velocity (Q8.8 fixed-point)
+                if (abs(scroll_vel_h) > DIGITIZER_MOMENTUM_MIN_VEL || abs(scroll_vel_v) > DIGITIZER_MOMENTUM_MIN_VEL) {
+                    momentum_vel_h = scroll_vel_h;
+                    momentum_vel_v = scroll_vel_v;
+                    momentum_accum_h = 0;
+                    momentum_accum_v = 0;
+                    momentum_active = true;
+                }
+                scroll_vel_h = 0;
+                scroll_vel_v = 0;
             } else if (contacts == 1 || (state == Drag && contacts <= 3)) {
-                // 1 finger = cursor move
-                // 2 fingers in Drag state = right-click drag
-                // 3 fingers in Drag state = middle-click drag
                 mouse_report.x = (x - last_x) / digitizer_mouse_speed_divisor;
                 mouse_report.y = (y - last_y) / digitizer_mouse_speed_divisor;
+                // Don't reset scroll velocity here — preserve it for momentum
+                // when the last finger lifts. Only reset for Drag (not scroll).
+                if (state == Drag) {
+                    scroll_vel_h = 0;
+                    scroll_vel_v = 0;
+                }
             } else if (contacts == 3 && duration < DIGITIZER_MOUSE_SWIPE_TIMEOUT) {
                 state = Swipe;
             } else {
                 static int carry_h = 0;
                 static int carry_v = 0;
-                const int  h       = x - last_x + carry_h;
-                const int  v       = y - last_y + carry_v;
+                const int  raw_h   = x - last_x;
+                const int  raw_v   = y - last_y;
+                const int  h       = raw_h + carry_h;
+                const int  v       = raw_v + carry_v;
 
                 int scroll_h = h / DIGITIZER_SCROLL_DIVISOR;
                 int scroll_v = v / DIGITIZER_SCROLL_DIVISOR;
-                // Clamp to ±1 for smooth scrolling (each unit = ~3 lines on macOS)
                 if (scroll_h > 1) scroll_h = 1;
                 if (scroll_h < -1) scroll_h = -1;
                 if (scroll_v > 1) scroll_v = 1;
                 if (scroll_v < -1) scroll_v = -1;
-                // Only consume what we actually sent
                 carry_h = h - scroll_h * DIGITIZER_SCROLL_DIVISOR;
                 carry_v = v - scroll_v * DIGITIZER_SCROLL_DIVISOR;
 
+                // EMA velocity in Q8.8: vel = (vel * 7 + raw * 256) / 8
+                // Slower decay (87.5% old) so finger-lift zero frames don't kill it
+                int32_t new_vel_h = (scroll_vel_h * 7 + raw_h * 256) / 8;
+                int32_t new_vel_v = (scroll_vel_v * 7 + raw_v * 256) / 8;
+                // Only update if moving (preserve velocity through zero-delta frames)
+                if (raw_h != 0 || abs(new_vel_h) > abs(scroll_vel_h) / 2) scroll_vel_h = new_vel_h;
+                if (raw_v != 0 || abs(new_vel_v) > abs(scroll_vel_v) / 2) scroll_vel_v = new_vel_v;
+
 #ifdef DIGITIZER_SCROLL_INVERT
-                mouse_report.h = -scroll_h;
+                mouse_report.h = scroll_h;
                 mouse_report.v = -scroll_v;
 #else
                 mouse_report.h = scroll_h;
@@ -304,6 +358,47 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
     }
     // Simple tap handling: tap sets a flag that holds the button for one report cycle
     // then clears. Drag holds button while fingers are down.
+    // Momentum scrolling: exponential decay with fractional accumulator
+    if (momentum_active && contacts == 0) {
+            // Accumulate velocity into fractional accumulator (Q8.8 -> raw units)
+            momentum_accum_h += momentum_vel_h;
+            momentum_accum_v += momentum_vel_v;
+
+            // Convert accumulator to scroll events (divisor is in raw units, accum is Q8.8)
+            int div_q8 = DIGITIZER_SCROLL_DIVISOR * 256;  // divisor in Q8.8
+            int mh = momentum_accum_h / div_q8;
+            int mv = momentum_accum_v / div_q8;
+            if (mh > 1) mh = 1;
+            if (mh < -1) mh = -1;
+            if (mv > 1) mv = 1;
+            if (mv < -1) mv = -1;
+            momentum_accum_h -= mh * div_q8;
+            momentum_accum_v -= mv * div_q8;
+
+            if (mh != 0 || mv != 0) {
+#ifdef DIGITIZER_SCROLL_INVERT
+                mouse_report.h = mh;
+                mouse_report.v = -mv;
+#else
+                mouse_report.h = mh;
+                mouse_report.v = mv;
+#endif
+            }
+
+            // Decay velocity: vel = vel * 254 / 256
+            momentum_vel_h = (momentum_vel_h * DIGITIZER_MOMENTUM_DECAY_NUM) >> DIGITIZER_MOMENTUM_DECAY_SHIFT;
+            momentum_vel_v = (momentum_vel_v * DIGITIZER_MOMENTUM_DECAY_NUM) >> DIGITIZER_MOMENTUM_DECAY_SHIFT;
+
+            // Stop when velocity is negligible
+            if (abs(momentum_vel_h) < DIGITIZER_MOMENTUM_MIN_VEL && abs(momentum_vel_v) < DIGITIZER_MOMENTUM_MIN_VEL) {
+                momentum_active = false;
+                momentum_vel_h = 0;
+                momentum_vel_v = 0;
+                momentum_accum_h = 0;
+                momentum_accum_v = 0;
+            }
+    }
+
     static bool     tap_fire   = false;
     static uint32_t tap_fire_time = 0;
 
@@ -329,5 +424,11 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
     last_contacts = contacts;
     last_x        = x;
     last_y        = y;
+    // Debug exports
+    dbg_state = state;
+    dbg_contacts = contacts;
+    dbg_tap_contacts = tap_contacts;
+    dbg_scroll_vel_h = scroll_vel_h;
+    dbg_scroll_vel_v = scroll_vel_v;
 }
 #endif

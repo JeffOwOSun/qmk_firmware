@@ -77,6 +77,13 @@ const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
 // Touchpad speed cycling
 extern uint8_t digitizer_mouse_speed_divisor;
 
+// Momentum debug exports
+extern int32_t  momentum_vel_h, momentum_vel_v;
+extern int32_t  momentum_accum_h, momentum_accum_v;
+extern bool     momentum_active;
+extern int32_t  dbg_scroll_vel_h, dbg_scroll_vel_v;
+extern int      dbg_state, dbg_contacts, dbg_tap_contacts;
+
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     if (record->event.pressed) {
         switch (keycode) {
@@ -91,6 +98,26 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         }
     }
     return true;
+}
+
+// Debug: VIA custom value handler for momentum state
+// data = [command_id, channel_id, value_id, ...]
+void via_custom_value_command_kb(uint8_t *data, uint8_t length) {
+    if (data[1] == 0xFE) {
+        // Fill starting at data[2]
+        data[2] = (uint8_t)dbg_state;
+        data[3] = (uint8_t)dbg_contacts;
+        data[4] = (uint8_t)dbg_tap_contacts;
+        data[5] = dbg_scroll_vel_h & 0xFF;
+        data[6] = (dbg_scroll_vel_h >> 8) & 0xFF;
+        data[7] = dbg_scroll_vel_v & 0xFF;
+        data[8] = (dbg_scroll_vel_v >> 8) & 0xFF;
+        data[9] = momentum_vel_h & 0xFF;
+        data[10] = (momentum_vel_h >> 8) & 0xFF;
+        data[11] = momentum_vel_v & 0xFF;
+        data[12] = (momentum_vel_v >> 8) & 0xFF;
+        data[13] = momentum_active ? 1 : 0;
+    }
 }
 
 // Touchpad: mouse fallback mode (macOS doesn't support Windows PTP protocol)
