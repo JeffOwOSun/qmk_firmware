@@ -229,15 +229,23 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
                 const int  h       = x - last_x + carry_h;
                 const int  v       = y - last_y + carry_v;
 
-                carry_h = h % DIGITIZER_SCROLL_DIVISOR;
-                carry_v = v % DIGITIZER_SCROLL_DIVISOR;
+                int scroll_h = h / DIGITIZER_SCROLL_DIVISOR;
+                int scroll_v = v / DIGITIZER_SCROLL_DIVISOR;
+                // Clamp to ±1 for smooth scrolling (each unit = ~3 lines on macOS)
+                if (scroll_h > 1) scroll_h = 1;
+                if (scroll_h < -1) scroll_h = -1;
+                if (scroll_v > 1) scroll_v = 1;
+                if (scroll_v < -1) scroll_v = -1;
+                // Only consume what we actually sent
+                carry_h = h - scroll_h * DIGITIZER_SCROLL_DIVISOR;
+                carry_v = v - scroll_v * DIGITIZER_SCROLL_DIVISOR;
 
 #ifdef DIGITIZER_SCROLL_INVERT
-                mouse_report.h = -(h / DIGITIZER_SCROLL_DIVISOR);
-                mouse_report.v = -(v / DIGITIZER_SCROLL_DIVISOR);
+                mouse_report.h = -scroll_h;
+                mouse_report.v = -scroll_v;
 #else
-                mouse_report.h = h / DIGITIZER_SCROLL_DIVISOR;
-                mouse_report.v = v / DIGITIZER_SCROLL_DIVISOR;
+                mouse_report.h = scroll_h;
+                mouse_report.v = scroll_v;
 #endif
             }
             break;

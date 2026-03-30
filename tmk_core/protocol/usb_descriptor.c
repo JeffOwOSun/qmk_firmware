@@ -188,6 +188,8 @@ const USB_Descriptor_HIDReport_Datatype_t PROGMEM SharedReport[] = {
 #    ifndef WHEEL_EXTENDED_REPORT
             HID_RI_LOGICAL_MINIMUM(8, -127),
             HID_RI_LOGICAL_MAXIMUM(8, 127),
+            HID_RI_PHYSICAL_MINIMUM(8, -3),
+            HID_RI_PHYSICAL_MAXIMUM(8, 3),
             HID_RI_REPORT_COUNT(8, 0x01),
             HID_RI_REPORT_SIZE(8, 0x08),
 #    else
@@ -204,6 +206,8 @@ const USB_Descriptor_HIDReport_Datatype_t PROGMEM SharedReport[] = {
 #    ifndef WHEEL_EXTENDED_REPORT
             HID_RI_LOGICAL_MINIMUM(8, -127),
             HID_RI_LOGICAL_MAXIMUM(8, 127),
+            HID_RI_PHYSICAL_MINIMUM(8, -3),
+            HID_RI_PHYSICAL_MAXIMUM(8, 3),
             HID_RI_REPORT_COUNT(8, 0x01),
             HID_RI_REPORT_SIZE(8, 0x08),
 #    else

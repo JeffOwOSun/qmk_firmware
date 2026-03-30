@@ -2,7 +2,8 @@
 #define TAPPING_TERM 200
 
 // Scroll speed (higher = slower, default 10)
-#define DIGITIZER_SCROLL_DIVISOR 30
+// Higher divisor = smaller scroll increments = smoother feel on macOS
+#define DIGITIZER_SCROLL_DIVISOR 120
 
 // 3-finger swipe keycodes for macOS
 #define DIGITIZER_SWIPE_UP_KC    LCTL(KC_UP)     // Mission Control
