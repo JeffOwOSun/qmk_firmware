@@ -331,10 +331,17 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
         }
         case Drag:
         case MoveScroll: {
+            // Track first finger (anchor) position for click-drag detection
+            static uint16_t anchor_x = 0, anchor_y = 0;
+            static bool     anchor_set = false;
+            static bool     two_finger_click_drag = false;
+
             if (contacts == 0) {
                 state = None;
                 cursor_tracking = false;
                 cursor_last_fx = 0; cursor_last_fy = 0;
+                anchor_set = false;
+                two_finger_click_drag = false;
                 // Start momentum from tracked scroll velocity (Q8.8 fixed-point)
                 if (abs(scroll_vel_h) > DIGITIZER_MOMENTUM_MIN_VEL || abs(scroll_vel_v) > DIGITIZER_MOMENTUM_MIN_VEL) {
                     momentum_vel_h = scroll_vel_h;
@@ -345,8 +352,13 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
                 }
                 scroll_vel_h = 0;
                 scroll_vel_v = 0;
-            } else if (contacts == 1 || (state == Drag && contacts <= 3)) {
-                // Apply 1-Euro filter for jitter reduction
+            } else if (contacts == 1 && !two_finger_click_drag) {
+                // Single finger cursor movement (normal)
+                if (!anchor_set) {
+                    anchor_x = x; anchor_y = y;
+                    anchor_set = true;
+                }
+
                 float te = 1.0f / 300.0f;
                 if (!cursor_tracking) {
                     filter_x.initialized = false;
@@ -372,15 +384,86 @@ void digitizer_update_mouse_report(report_digitizer_t *report) {
                 mouse_report.y = (int)cursor_accum_y;
                 cursor_accum_x -= mouse_report.x;
                 cursor_accum_y -= mouse_report.y;
-                // Don't reset scroll velocity here — preserve it for momentum
-                // when the last finger lifts. Only reset for Drag (not scroll).
                 if (state == Drag) {
                     scroll_vel_h = 0;
                     scroll_vel_v = 0;
                 }
-            } else if (contacts == 3 && duration < DIGITIZER_MOUSE_SWIPE_TIMEOUT) {
-                state = Swipe;
-            } else {
+            } else if (contacts == 1 && two_finger_click_drag) {
+                // Second finger released during click-drag
+                // Reset filter so next finger-down doesn't jump
+                cursor_tracking = false;
+                cursor_last_fx = 0; cursor_last_fy = 0;
+                // Stay in click-drag mode — button stays held, waiting for second finger again
+                // Set left click button to keep it held
+                mouse_report.buttons |= 0x1;
+            } else if (contacts == 2 && state == Drag) {
+                // Drag state + 2 fingers: click-drag with second finger
+                // (entered via tap-hold-drag, now second finger moves cursor)
+                two_finger_click_drag = true;
+                // Find the moving finger (not the anchor)
+                int move_idx = 0;
+                int best_dist = 0;
+                for (int i = 0; i < DIGITIZER_FINGER_COUNT; i++) {
+                    if (!report->fingers[i].tip) continue;
+                    int ddx = report->fingers[i].x - anchor_x;
+                    int ddy = report->fingers[i].y - anchor_y;
+                    int dist = ddx * ddx + ddy * ddy;
+                    if (dist > best_dist) { best_dist = dist; move_idx = i; }
+                }
+                uint16_t track_x = report->fingers[move_idx].x;
+                uint16_t track_y = report->fingers[move_idx].y;
+
+                float te = 1.0f / 300.0f;
+                if (!cursor_tracking) {
+                    filter_x.initialized = false;
+                    filter_y.initialized = false;
+                    cursor_tracking = true;
+                    cursor_accum_x = 0; cursor_accum_y = 0;
+                }
+                float fx = one_euro_filter(&filter_x, (float)track_x, te);
+                float fy = one_euro_filter(&filter_y, (float)track_y, te);
+                if (cursor_last_fx == 0 && cursor_last_fy == 0) {
+                    cursor_last_fx = fx; cursor_last_fy = fy;
+                }
+                float fdx = fx - cursor_last_fx;
+                float fdy = fy - cursor_last_fy;
+                cursor_last_fx = fx;
+                cursor_last_fy = fy;
+                float speed = __builtin_sqrtf(fdx * fdx + fdy * fdy);
+                float gain = accel_curve(speed);
+                cursor_accum_x += fdx * gain / digitizer_mouse_speed_divisor;
+                cursor_accum_y += fdy * gain / digitizer_mouse_speed_divisor;
+                mouse_report.x = (int)cursor_accum_x;
+                mouse_report.y = (int)cursor_accum_y;
+                cursor_accum_x -= mouse_report.x;
+                cursor_accum_y -= mouse_report.y;
+                // Set left click button
+                mouse_report.buttons |= 0x1;
+            } else if (contacts >= 2 && !two_finger_click_drag) {
+                // 2+ fingers, both moving = scroll
+                // Detect if anchor finger is stationary
+                if (anchor_set) {
+                    int adx = abs(x - anchor_x);
+                    int ady = abs(y - anchor_y);
+                    if (adx > DIGITIZER_MOUSE_TAP_DISTANCE || ady > DIGITIZER_MOUSE_TAP_DISTANCE) {
+                        // Anchor moved — this is a scroll gesture (both fingers moving)
+                        anchor_set = false;  // stop checking
+                    } else if (contacts == 2) {
+                        // Anchor stationary, second finger present = click-drag
+                        two_finger_click_drag = true;
+                        state = Drag;
+                        // Reset cursor tracking for the new moving finger
+                        cursor_tracking = false;
+                        cursor_last_fx = 0; cursor_last_fy = 0;
+                        break;
+                    }
+                }
+
+                if (contacts == 3 && duration < DIGITIZER_MOUSE_SWIPE_TIMEOUT) {
+                    state = Swipe;
+                    break;
+                }
+
                 static int carry_h = 0;
                 static int carry_v = 0;
                 const int  raw_h   = x - last_x;
